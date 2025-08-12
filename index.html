@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>점포 위치 입력 + 검색 + 추가 정보</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f9f9f9;
+      text-align: center;
+    }
+    #uploadContainer {
+      margin-bottom: 10px;
+    }
+    #searchContainer {
+      margin-bottom: 15px;
+    }
+    #floorplanContainer {
+      position: relative;
+      width: 90vw;
+      height: calc(90vw * 0.75);
+      margin: 0 auto;
+      border: 2px solid #333;
+      background: #fff;
+      overflow: hidden;
+      max-width: 1200px;
+      max-height: 900px;
+      user-select: none;
+    }
+    #floorplanImage {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      pointer-events: none;
+    }
+    .marker {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background: red;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      border: 2px solid white;
+      box-shadow: 0 0 3px rgba(0,0,0,0.3);
+      transition: box-shadow 0.2s ease;
+      pointer-events: auto;
+    }
+    .marker:hover {
+      box-shadow: 0 0 6px 2px #f00;
+    }
+    .marker.my-location {
+      background: blue !important;
+      box-shadow: 0 0 6px 2px #00f !important;
+    }
+    .marker.highlight {
+      animation: blink 1.5s ease-in-out 3;
+      box-shadow: 0 0 12px 4px gold !important;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    button {
+      cursor: pointer;
+      padding: 6px 12px;
+      font-size: 14px;
+      margin-left: 6px;
+    }
+    input[type="text"] {
+      padding: 6px 10px;
+      font-size: 14px;
+      width: 180px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>백화점 평면도 점포 위치 입력기</h1>
+
+  <div id="uploadContainer">
+    <input type="file" id="imageUploader" accept="image/*" />
+    <button onclick="clearMarkers()">초기화(마커 모두 삭제)</button>
+  </div>
+
+  <div id="searchContainer">
+    <input type="text" id="searchInput" placeholder="점포 이름 또는 추가 정보로 검색" />
+    <button onclick="searchMarker()">검색</button>
+    <button onclick="clearSearchHighlight()">검색 초기화</button>
+  </div>
+
+  <div id="floorplanContainer">
+    <img id="floorplanImage" alt="평면도 이미지 업로드 필요" />
+    <svg id="pathSvg" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></svg>
+  </div>
+
+  <script>
+    const imageUploader = document.getElementById('imageUploader');
+    const floorplanContainer = document.getElementById('floorplanContainer');
+    const floorplanImage = document.getElementById('floorplanImage');
+    const pathSvg = document.getElementById('pathSvg');
+    const searchInput = document.getElementById('searchInput');
+
+    let storeMarkers = [];
+    let myLocation = null;
+    let searchHighlightedIndex = null;
+
+    const STORAGE_KEY = 'storeData';
+
+    function saveMarkers() {
+      const data = {
+        imageSrc: floorplanImage.src || '',
+        markers: storeMarkers,
+        myLocation: myLocation
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function renderMarkers() {
+      floorplanContainer.querySelectorAll('.marker').forEach(m => m.remove());
+
+      storeMarkers.forEach(({name, xPercent, yPercent, info}, idx) => {
+        const marker = document.createElement('div');
+        marker.className = 'marker';
+        marker.style.left = xPercent + '%';
+        marker.style.top = yPercent + '%';
+        marker.title = `${name}${info ? '\n추가 정보: ' + info : ''}`;
+        marker.dataset.index = idx;
+
+        if (idx === searchHighlightedIndex) {
+          marker.classList.add('highlight');
+        }
+
+        marker.addEventListener('click', e => {
+          e.stopPropagation();
+
+          const infoText = info ? `\n추가 정보: ${info}` : '';
+          const msg = `점포 이름: "${name}"${infoText}\n\n삭제하려면 '1', 추가 정보 편집은 '2'를 입력하세요. (취소는 아무 키나)`;
+          const action = prompt(msg);
+
+          if (action === '1') {
+            if (confirm(`점포 "${name}" 위치를 삭제하시겠습니까?`)) {
+              storeMarkers.splice(idx, 1);
+              if (searchHighlightedIndex === idx) searchHighlightedIndex = null;
+              saveMarkers();
+              renderMarkers();
+            }
+          } else if (action === '2') {
+            const newInfo = prompt('추가 정보를 입력하세요:', info || '');
+            if (newInfo !== null) {
+              storeMarkers[idx].info = newInfo.trim();
+              saveMarkers();
+              renderMarkers();
+            }
+          }
+        });
+
+        floorplanContainer.appendChild(marker);
+      });
+
+      if (myLocation) {
+        const marker = document.createElement('div');
+        marker.className = 'marker my-location';
+        marker.style.left = myLocation.xPercent + '%';
+        marker.style.top = myLocation.yPercent + '%';
+        marker.title = '내 위치';
+        floorplanContainer.appendChild(marker);
+      }
+
+      drawPath();
+    }
+
+    function drawPath() {
+      pathSvg.innerHTML = '';
+
+      if (!myLocation || storeMarkers.length === 0) return;
+
+      function percentToPx(xPercent, yPercent) {
+        const rect = floorplanContainer.getBoundingClientRect();
+        const x = (xPercent / 100) * rect.width;
+        const y = (yPercent / 100) * rect.height;
+        return { x, y };
+      }
+
+      const myPos = percentToPx(myLocation.xPercent, myLocation.yPercent);
+
+      let nearest = null;
+      let minDist = Infinity;
+      storeMarkers.forEach(({xPercent, yPercent}) => {
+        const pos = percentToPx(xPercent, yPercent);
+        const dist = Math.hypot(pos.x - myPos.x, pos.y - myPos.y);
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = pos;
+        }
+      });
+
+      if (!nearest) return;
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute('x1', myPos.x);
+      line.setAttribute('y1', myPos.y);
+      line.setAttribute('x2', nearest.x);
+      line.setAttribute('y2', nearest.y);
+      line.setAttribute('stroke', 'blue');
+      line.setAttribute('stroke-width', 3);
+      line.setAttribute('stroke-dasharray', '8,4');
+      pathSvg.appendChild(line);
+    }
+
+    window.onload = () => {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      if (data) {
+        floorplanImage.src = data.imageSrc || '';
+        storeMarkers = data.markers || [];
+        myLocation = data.myLocation || null;
+      }
+    };
+
+    floorplanImage.onload = () => {
+      renderMarkers();
+    };
+
+    imageUploader.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        floorplanImage.src = event.target.result;
+        storeMarkers = [];
+        myLocation = null;
+        searchHighlightedIndex = null;
+        saveMarkers();
+      }
+      reader.readAsDataURL(file);
+    });
+
+    floorplanContainer.addEventListener('click', (e) => {
+      if (e.button !== 0) return;
+
+      const rect = floorplanContainer.getBoundingClientRect();
+      const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
+      const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
+
+      const name = prompt('점포 이름을 입력하세요:');
+      if (!name) return;
+
+      storeMarkers.push({ name, xPercent, yPercent, info: '' });
+      saveMarkers();
+      renderMarkers();
+    });
+
+    floorplanContainer.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+
+      const rect = floorplanContainer.getBoundingClientRect();
+      const xPercent = ((e.clientX - rect.left) / rect.width) * 100;
+      const yPercent = ((e.clientY - rect.top) / rect.height) * 100;
+
+      myLocation = { xPercent, yPercent };
+      saveMarkers();
+      renderMarkers();
+    });
+
+    function clearMarkers() {
+      if (confirm('모든 점포 위치와 내 위치를 삭제하시겠습니까?')) {
+        storeMarkers = [];
+        myLocation = null;
+        searchHighlightedIndex = null;
+        saveMarkers();
+        renderMarkers();
+      }
+    }
+
+    function searchMarker() {
+      const keyword = searchInput.value.trim().toLowerCase();
+      if (!keyword) {
+        alert('검색어를 입력하세요.');
+        return;
+      }
+
+      const idx = storeMarkers.findIndex(m =>
+        m.name.toLowerCase().includes(keyword) ||
+        (m.info && m.info.toLowerCase().includes(keyword))
+      );
+
+      if (idx === -1) {
+        alert(`"${keyword}"와 일치하는 점포명 또는 추가정보가 없습니다.`);
+        return;
+      }
+
+      searchHighlightedIndex = idx;
+      renderMarkers();
+
+      // 필요하면 마커 위치로 스크롤/확대 기능 추가 가능
+    }
+
+    function clearSearchHighlight() {
+      searchHighlightedIndex = null;
+      renderMarkers();
+      searchInput.value = '';
+    }
+  </script>
+
+</body>
+</html>
